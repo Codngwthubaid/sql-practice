@@ -15,3 +15,5 @@ This gives a list of users with their follower counts.
 
 3. Final SELECT Statement:
 Uses the data from follower_count and distinct_users to calculate the famous percentage for each user.
+The multiplication uses 100.0 (not 100) so that MySQL performs decimal division instead of 
+truncating the result to a whole number.

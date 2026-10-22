@@ -30,9 +30,9 @@ SELECT * FROM sf_transactions;
 WITH monthly_revenue AS (
 	SELECT 
 		SUM(value) AS total_revenue,
-		DATE_FORMAT(created_at, '%Y-%M') AS date_by_year_month
+		DATE_FORMAT(created_at, '%Y-%m') AS date_by_year_month
 	FROM sf_transactions
-	GROUP BY DATE_FORMAT(created_at, '%Y-%M')
+	GROUP BY DATE_FORMAT(created_at, '%Y-%m')
 ),
 revenue_change AS (
 	SELECT 
@@ -47,7 +47,7 @@ SELECT
     rc.total_revenue,
 	ROUND( CASE 
 			WHEN rc.previous_revenue IS NULL THEN NULL
-			ELSE ((rc.total_revenue - rc.previous_revenue) / rc.previous_revenue) * 100 
+			ELSE ((rc.total_revenue - rc.previous_revenue) * 100.0) / rc.previous_revenue
 			END, 2
 		) AS revenue_changing_percentage
 FROM revenue_change AS rc

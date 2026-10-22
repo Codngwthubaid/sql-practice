@@ -29,7 +29,7 @@ distinct_users AS (
 )
 SELECT 
 	fc.user_id,
-    ROUND((fc.follower_count * 100) / (SELECT COUNT(*) FROM distinct_users), 2) AS follower_percentage
+    ROUND((fc.follower_count * 100.0) / (SELECT COUNT(*) FROM distinct_users), 2) AS follower_percentage
 FROM follower_count AS fc;
 
 

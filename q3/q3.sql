@@ -36,7 +36,7 @@ WITH karl_friend AS (
 		SELECT 
 			user_id
 		FROM users
-		WHERE user_name = "karl"
+		WHERE user_name = 'Karl'
 	)
 ),
 hans_friend AS (
@@ -47,7 +47,7 @@ hans_friend AS (
 		SELECT 
 			user_id
 		FROM users
-		WHERE user_name = "Hans"
+		WHERE user_name = 'Hans'
 	)
 )
 SELECT 
