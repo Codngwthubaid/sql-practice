@@ -25,8 +25,20 @@ sql_de_practice/
 ├── q2/
 │   ├── q2.sql         <- month-over-month revenue change
 │   └── readme.md      <- question + explanation
-└── q3/
-    ├── q3.sql         <- mutual friends between two users
+├── q3/
+│   ├── q3.sql         <- mutual friends between two users
+│   └── readme.md      <- question + explanation
+├── q4/
+│   ├── q4.sql         <- naïve forecast RMSE for distance per dollar
+│   └── readme.md      <- question + explanation
+├── q5/
+│   ├── q5.sql         <- project budget per employee
+│   └── readme.md      <- question + explanation
+├── q6/
+│   ├── q6.sql         <- available beds by host nationality
+│   └── readme.md      <- question + explanation
+└── q7/
+    ├── q7.sql         <- average spend on first-quarter Fridays
     └── readme.md      <- question + explanation
 ```
 
@@ -39,6 +51,10 @@ sql_de_practice/
 | [Q1](#q1--famous-percentage-per-user) | Famous percentage of each user in a social graph | CTE, `UNION`, `GROUP BY`, scalar subquery, `ROUND` | [q1/q1.sql](q1/q1.sql) |
 | [Q2](#q2--month-over-month-revenue-change) | Month-over-month % change in revenue | CTE, `LAG()` window function, `DATE_FORMAT`, `CASE` for NULLs | [q2/q2.sql](q2/q2.sql) |
 | [Q3](#q3--mutual-friends-between-two-users) | Mutual friends of Karl and Hans | CTE, correlated scalar subquery, self-join, `INNER JOIN` | [q3/q3.sql](q3/q3.sql) |
+| [Q4](#q4--naive-forecast-rmse) | Naïve forecast RMSE for distance per dollar | CTE, monthly aggregation, `LAG()`, `POWER`, `SQRT`, `AVG` | [q4/q4.sql](q4/q4.sql) |
+| [Q5](#q5--project-budget-per-employee) | Project budget allocated per employee | `LEFT JOIN`, `COUNT`, `GROUP BY`, `ROUND`, `ORDER BY` | [q5/q5.sql](q5/q5.sql) |
+| [Q6](#q6--available-beds-by-host-nationality) | Total available beds per host nationality | `LEFT JOIN`, `SUM`, `GROUP BY`, descending sort | [q6/q6.sql](q6/q6.sql) |
+| [Q7](#q7--average-spend-on-q1-fridays) | Average spend per order on first-quarter Fridays | CTE, date filtering, `EXTRACT`, `AVG`, `GROUP BY` | [q7/q7.sql](q7/q7.sql) |
 
 ---
 
@@ -224,19 +240,260 @@ INNER JOIN hans_friend AS hf ON u.user_id = hf.friend_id;
 
 ---
 
+## Q4 — Naive Forecast RMSE
+
+> Some forecasting methods are extremely simple and surprisingly effective.
+> Naïve forecast is one of them. To create a naïve forecast for "distance per
+> dollar" (defined as `distance_to_travel / monetary_cost`), first sum the
+> "distance to travel" and "monetary cost" values monthly. This gives the actual
+> value for the current month. For the forecasted value, use the previous month's
+> value. After obtaining both actual and forecasted values, calculate the root
+> mean squared error (RMSE) using the formula
+> `RMSE = sqrt(mean(square(actual - forecast)))`. Report the RMSE rounded to two
+> decimal places.
+
+### Approach
+
+| Step | CTE | What it does |
+|------|-----|--------------|
+| 1 | `monthly_aggregates` | `SUM`s distance and cost per month and rounds each total to 2 decimals |
+| 2 | `distance_per_dollar` | Divides the monthly distance by the monthly cost to get the actual value |
+| 3 | `naive_forecast` | `LAG(distance_per_dollar) OVER (ORDER BY mentioned_month)` supplies the previous month's value as the forecast |
+| 4 | Final `SELECT` | Drops the first month (no forecast), squares each `actual - forecast`, takes the `AVG`, then applies `SQRT` and `ROUND(..., 2)` |
+
+### Solution
+
+```sql
+WITH monthly_aggregates AS (
+	SELECT
+		EXTRACT(MONTH FROM request_date) AS mentioned_month,
+		ROUND(SUM(distance_to_travel), 2) AS total_distance,
+		ROUND(SUM(monetary_cost), 2) AS total_cost
+	FROM
+		uber_request_logs
+	GROUP BY
+		EXTRACT(MONTH FROM request_date)
+),
+distance_per_dollar AS (
+	SELECT
+		mentioned_month,
+		ROUND((total_distance / total_cost), 2) AS distance_per_dollar
+	FROM
+		monthly_aggregates
+),
+naive_forecast AS (
+	SELECT
+		mentioned_month,
+        distance_per_dollar,
+        LAG(distance_per_dollar, 1)
+			OVER(
+				ORDER BY
+					mentioned_month
+            ) AS forecast_value
+	FROM
+		distance_per_dollar
+)
+SELECT
+	ROUND(SQRT(AVG(POWER((distance_per_dollar - forecast_value), 2))), 2) AS RMSE
+FROM
+	naive_forecast
+WHERE
+	forecast_value IS NOT NULL;
+```
+
+### Expected output
+
+| RMSE |
+|------|
+| 2.34 |
+
+> **Note:** January has no previous month, so it is excluded from the RMSE. The
+> query groups by month number only, which is fine for the single-year sample
+> data; a multi-year dataset should group and order by year-month instead (for
+> example, `DATE_FORMAT(request_date, '%Y-%m')`).
+
+---
+
+## Q5 — Project Budget per Employee
+
+> Given a list of projects and employees mapped to each project, calculate the
+> amount of project budget allocated to each employee. The output should include
+> the project title and the project budget rounded to the closest integer. Order
+> your list by projects with the highest budget per employee first.
+
+### Approach
+
+| Step | Clause | What it does |
+|------|--------|--------------|
+| 1 | `LEFT JOIN` | Joins each project to its employee assignments on `project_id`, keeping projects even when they have no employees |
+| 2 | `GROUP BY` | Groups by project ID, title, and budget so each project produces one row |
+| 3 | `COUNT` | Counts the employees assigned to the project |
+| 4 | Final `SELECT` | Divides the project budget by the employee count, rounds to the nearest integer, and sorts highest first |
+
+### Solution
+
+```sql
+SELECT
+	msp.id AS project_id,
+	msp.title AS project_title,
+    ROUND(msp.budget / COUNT(msempp.emp_id), 0) AS project_per_budget
+FROM
+	ms_projects AS msp
+LEFT JOIN ms_emp_projects AS msempp
+	ON msp.id = msempp.project_id
+GROUP BY
+	msp.id,
+    msp.title,
+    msp.budget
+ORDER BY
+	project_per_budget DESC;
+```
+
+### Expected output
+
+| project_id | project_title | project_per_budget |
+|------------|---------------|--------------------|
+| 8 | Project8 | 49284 |
+| 15 | Project15 | 48116 |
+| 10 | Project10 | 47587 |
+| 19 | Project19 | 44986 |
+| 3 | Project3 | 43909 |
+| 13 | Project13 | 43238 |
+| 6 | Project6 | 41611 |
+| 5 | Project5 | 36268 |
+| 7 | Project7 | 34003 |
+| 2 | Project2 | 32487 |
+| 9 | Project9 | 32341 |
+| 14 | Project14 | 30014 |
+| 1 | Project1 | 29498 |
+| 16 | Project16 | 19922 |
+| 20 | Project20 | 19497 |
+| 17 | Project17 | 19061 |
+| 4 | Project4 | 15776 |
+| 11 | Project11 | 11705 |
+| 12 | Project12 | 10468 |
+| 18 | Project18 | 10302 |
+
+> **Note:** every project in the sample data has exactly one assigned employee,
+> so the budget per employee equals the project budget. With multiple employees
+> the division changes the ranking accordingly.
+
+---
+
+## Q6 — Available Beds by Host Nationality
+
+> Find the total number of available beds per hosts' nationality. Output the
+> nationality along with the corresponding total number of available beds. Sort
+> records by the total available beds in descending order.
+
+### Approach
+
+| Step | Clause | What it does |
+|------|--------|--------------|
+| 1 | `LEFT JOIN` | Joins `airbnb_apartments` to `airbnb_hosts` on `host_id` to attach each listing to its host's nationality |
+| 2 | `GROUP BY` | Groups all apartments by host nationality |
+| 3 | `SUM` | Adds up `n_beds` across the apartments for each nationality |
+| 4 | `ORDER BY` | Sorts by total available beds, highest first |
+
+### Solution
+
+```sql
+SELECT
+	SUM(aa.n_beds) AS available_beds,
+    ah.nationality AS host_nationality
+FROM
+	airbnb_apartments AS aa
+LEFT JOIN airbnb_hosts AS ah
+	ON aa.host_id = ah.host_id
+GROUP BY
+	ah.nationality
+ORDER BY
+	available_beds DESC;
+```
+
+### Expected output
+
+| available_beds | host_nationality |
+|----------------|------------------|
+| 8 | China |
+| 7 | USA |
+| 5 | Mali |
+
+> **Note:** the `LEFT JOIN` is driven by the apartments table, so hosts with no
+> listings (such as host `2` in the sample data) do not appear in the result.
+
+---
+
+## Q7 — Average Spend on Q1 Fridays
+
+> IBM is working on a new feature to analyze user purchasing behavior for all
+> Fridays in the first quarter of the year. For each Friday separately, calculate
+> the average amount users have spent per order. The output should contain the
+> week number of that Friday and average amount spent.
+
+### Approach
+
+| Step | CTE | What it does |
+|------|-----|--------------|
+| 1 | `q1_fridays` | Keeps only purchases in January–March (`EXTRACT(MONTH ...) IN (1, 2, 3)`) whose `day_name` is `'Friday'`, and labels each row with a `week_number` |
+| 2 | Final `SELECT` | Groups by `week_number`, averages the spend per order, rounds to 2 decimals, and sorts by week |
+
+### Solution
+
+```sql
+WITH q1_fridays AS (
+	SELECT
+		user_id,
+        date,
+        amount_spent,
+		EXTRACT(MONTH FROM date) AS week_number
+	FROM
+		user_purchases
+	WHERE
+		EXTRACT(MONTH FROM date) IN (1,2,3)
+		AND day_name = 'Friday'
+)
+SELECT
+	week_number,
+    ROUND(AVG(amount_spent), 2) AS avg_amount_spend
+FROM
+	q1_fridays
+GROUP BY
+	week_number
+ORDER BY
+	week_number;
+```
+
+### Expected output
+
+| week_number | avg_amount_spend |
+|-------------|------------------|
+| 1 | 636.33 |
+| 2 | 479.67 |
+
+> **Note:** in the current script, `week_number` is actually
+> `EXTRACT(MONTH FROM date)`, so the query groups all Fridays in a month together
+> and returns month numbers rather than ISO week numbers. The output above
+> reflects the script as written. To group by the literal week of each Friday,
+> use `WEEK(date, 3)` (or `WEEKOFYEAR(date)`) as the grouping key.
+
+---
+
 ## SQL Concepts Covered
 
 | Concept | Where |
 |---------|-------|
-| Common Table Expressions (`WITH`) | Q1, Q2, Q3 |
-| Window functions (`LAG`, `OVER`) | Q2 |
+| Common Table Expressions (`WITH`) | Q1, Q2, Q3, Q4, Q7 |
+| Window functions (`LAG`, `OVER`) | Q2, Q4 |
 | Set operations (`UNION`) | Q1 |
-| Aggregations (`COUNT`, `SUM`, `GROUP BY`) | Q1, Q2 |
-| Date formatting (`DATE_FORMAT`) | Q2 |
+| Aggregations (`COUNT`, `SUM`, `AVG`, `GROUP BY`) | Q1, Q2, Q4, Q5, Q6, Q7 |
+| Date formatting and extraction (`DATE_FORMAT`, `EXTRACT`) | Q2, Q4, Q7 |
 | NULL-safe conditional logic (`CASE`) | Q2 |
-| Joins (`INNER JOIN`, self-join) | Q3 |
+| Joins (`INNER JOIN`, `LEFT JOIN`, self-join) | Q3, Q5, Q6 |
 | Scalar / correlated subqueries | Q1, Q3 |
-| Numeric precision (`ROUND`, decimal division) | Q1, Q2 |
+| Numeric precision and rounding (`ROUND`, decimal division) | Q1, Q2, Q4, Q5, Q7 |
+| Error metrics (`POWER`, `SQRT`) | Q4 |
+| Filtering and sorting (`WHERE`, `ORDER BY ... DESC`) | Q4, Q5, Q6, Q7 |
 
 ---
 
