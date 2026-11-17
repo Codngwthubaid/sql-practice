@@ -40,6 +40,30 @@ sql_de_practice/
 └── q7/
     ├── q7.sql         <- average spend on first-quarter Fridays
     └── readme.md      <- question + explanation
+├── q8/
+│   ├── q8.sql         <- net difference in product launches (2020 vs 2019)
+│   └── readme.md      <- question + explanation
+├── q9/
+│   ├── q9.sql         <- genre of the most Oscar-winning person
+│   └── readme.md      <- question + explanation
+├── q10/
+│   ├── q10.sql        <- returning active users (2nd purchase within 7 days)
+│   └── readme.md      <- question + explanation
+├── q11/
+│   ├── q11.sql        <- transaction count per product
+│   └── readme.md      <- question + explanation
+├── q12/
+│   ├── q12.sql        <- salary difference between marketing and engineering
+│   └── readme.md      <- question + explanation
+├── q13/
+│   ├── q13.sql        <- review score counts for Hotel Arena
+│   └── readme.md      <- question + explanation
+├── q14/
+│   ├── q14.sql        <- total sales revenue of Samantha and Lisa
+│   └── readme.md      <- question + explanation
+└── q15/
+    ├── q15.sql        <- days with more distinct email receivers than senders
+    └── readme.md      <- question + explanation
 ```
 
 ---
@@ -55,6 +79,14 @@ sql_de_practice/
 | [Q5](#q5--project-budget-per-employee) | Project budget allocated per employee | `LEFT JOIN`, `COUNT`, `GROUP BY`, `ROUND`, `ORDER BY` | [q5/q5.sql](q5/q5.sql) |
 | [Q6](#q6--available-beds-by-host-nationality) | Total available beds per host nationality | `LEFT JOIN`, `SUM`, `GROUP BY`, descending sort | [q6/q6.sql](q6/q6.sql) |
 | [Q7](#q7--average-spend-on-q1-fridays) | Average spend per order on first-quarter Fridays | CTE, date filtering, `EXTRACT`, `AVG`, `GROUP BY` | [q7/q7.sql](q7/q7.sql) |
+| [Q8](#q8--net-difference-in-product-launches-2020-vs-2019) | Net difference in products launched in 2020 vs 2019 by company | Conditional aggregation (`CASE`), `GROUP BY`, `ORDER BY` | [q8/q8.sql](q8/q8.sql) |
+| [Q9](#q9--genre-of-the-most-oscar-winning-person) | Genre of the person with the most Oscar wins | `INNER JOIN`, `GROUP BY`, aggregate subquery (`MAX`), `ORDER BY` | [q9/q9.sql](q9/q9.sql) |
+| [Q10](#q10--returning-active-users) | Users with a second purchase within 7 days | Window functions (`LEAD`, `ROW_NUMBER`), `PARTITION BY`, `DATEDIFF` | [q10/q10.sql](q10/q10.sql) |
+| [Q11](#q11--transaction-count-per-product) | Number of transactions per product | `INNER JOIN`, `COUNT`, `GROUP BY`, `ORDER BY` | [q11/q11.sql](q11/q11.sql) |
+| [Q12](#q12--salary-difference-between-marketing-and-engineering) | Difference between highest marketing and engineering salaries | Conditional aggregation (`MAX(CASE)`), `LEFT JOIN`, `ABS` | [q12/q12.sql](q12/q12.sql) |
+| [Q13](#q13--review-score-counts-for-hotel-arena) | Review score counts for Hotel Arena | `WHERE`, `GROUP BY`, `COUNT`, `ORDER BY` | [q13/q13.sql](q13/q13.sql) |
+| [Q14](#q14--total-sales-revenue-of-samantha-and-lisa) | Total sales revenue of Samantha and Lisa | `SUM`, `WHERE ... IN` | [q14/q14.sql](q14/q14.sql) |
+| [Q15](#q15--days-with-more-distinct-email-receivers-than-senders) | Days where distinct email receivers exceed distinct senders | `COUNT(DISTINCT)`, `GROUP BY`, `JOIN`, comparison | [q15/q15.sql](q15/q15.sql) |
 
 ---
 
@@ -477,6 +509,359 @@ ORDER BY
 > reflects the script as written. To group by the literal week of each Friday,
 > use `WEEK(date, 3)` (or `WEEKOFYEAR(date)`) as the grouping key.
 
+## Q8 — Net Difference in Product Launches (2020 vs 2019)
+
+> You are given a table of product launches by company by year. Write a query to count
+> the net difference between the number of products companies launched in 2020 with
+> the number of products companies launched in the previous year. Output the name of
+> the companies and a net difference of net products released for 2020 compared to
+> the previous year.
+
+### Approach
+
+| Step | CTE | What it does |
+|------|-----|--------------|
+| 1 | `product_counts` | Conditional `SUM(CASE WHEN year = ...)` counts each company's launches in 2019 and 2020 |
+| 2 | Final `SELECT` | Subtracts the 2019 count from the 2020 count and sorts the net difference descending |
+
+### Solution
+
+```sql
+WITH product_counts AS (
+	SELECT
+		company_name,
+		SUM(CASE WHEN year = 2019 THEN 1 ELSE 0 END) AS product_2019,
+		SUM(CASE WHEN year = 2020 THEN 1 ELSE 0 END) AS product_2020
+	FROM
+		car_launches
+	WHERE
+		year IN (2019, 2020)
+	GROUP BY
+		company_name
+)
+SELECT
+	company_name,
+	(product_2020 - product_2019) AS net_difference
+FROM
+	product_counts
+ORDER BY
+	net_difference DESC;
+```
+
+### Expected output
+
+| company_name | net_difference |
+|--------------|----------------|
+| Chevrolet | 2 |
+| Jeep | 1 |
+| Toyota | -1 |
+| Ford | -1 |
+| Honda | -3 |
+
+---
+
+## Q9 — Genre of the Most Oscar-Winning Person
+
+> Find the genre of the person with the most number of oscar winnings. If there are
+> more than one person with the same number of oscar wins, return the first one in
+> alphabetic order based on their name. Use the names as keys when joining the
+> tables.
+
+### Approach
+
+| Step | CTE | What it does |
+|------|-----|--------------|
+| 1 | `winner_details` | Joins `nominee_information` to `oscar_nominees` on `name`, groups by nominee and genre, and `SUM`s `winner` |
+| 2 | Final `SELECT` | Keeps only rows whose `win_count` equals the overall `MAX(win_count)` |
+
+### Solution
+
+```sql
+WITH winner_details AS (
+	SELECT
+		ni.top_genre AS genre,
+		ons.nominee AS nominee_names,
+		SUM(ons.winner) AS win_count
+	FROM
+		nominee_information AS ni
+	INNER JOIN oscar_nominees AS ons
+		ON ni.name = ons.nominee
+	GROUP BY
+		ons.nominee,
+		ni.top_genre
+)
+SELECT
+	genre
+FROM
+	winner_details
+WHERE
+	win_count = (
+		SELECT
+			MAX(win_count)
+		FROM
+			winner_details
+	);
+```
+
+### Expected output
+
+| genre |
+|-------|
+| Drama |
+
+---
+
+## Q10 — Returning Active Users
+
+> Write a query that'll identify returning active users. A returning active user is
+> a user that has made a second purchase within 7 days of any other of their
+> purchases. Output a list of user_ids of these returning active users.
+
+### Approach
+
+| Step | CTE | What it does |
+|------|-----|--------------|
+| 1 | `transactions_record` | `LEAD(created_at)` per user gives the next purchase date; `ROW_NUMBER()` orders each user's purchases |
+| 2 | Final `SELECT` | Keeps the first purchase of each user where the gap to the second purchase is at most 7 days |
+
+### Solution
+
+```sql
+WITH transactions_record AS (
+	SELECT
+		user_id,
+		created_at AS first_purchased,
+		LEAD(created_at) OVER (
+			PARTITION BY user_id
+			ORDER BY created_at
+		) AS second_purchased,
+		ROW_NUMBER() OVER (
+			PARTITION BY user_id
+			ORDER BY created_at
+		) AS purchased_num
+	FROM
+		amazon_transactions
+)
+SELECT
+	user_id,
+	first_purchased,
+	second_purchased,
+	DATEDIFF(second_purchased, first_purchased) AS days_between
+FROM
+	transactions_record
+WHERE
+	purchased_num = 1
+	AND
+	DATEDIFF(second_purchased, first_purchased) <= 7;
+```
+
+### Expected output
+
+| user_id | first_purchased | second_purchased | days_between |
+|---------|-----------------|------------------|--------------|
+| 122 | 2020-03-06 00:00:00 | 2020-03-07 00:00:00 | 1 |
+
+---
+
+## Q11 — Transaction Count per Product
+
+> Find the number of transactions that occurred for each product. Output the product
+> name along with the corresponding number of transactions and order records by the
+> product id in ascending order. You can ignore products without transactions.
+
+### Approach
+
+| Step | Clause | What it does |
+|------|--------|--------------|
+| 1 | `INNER JOIN` | Joins inventory to transactions on `product_id` |
+| 2 | `GROUP BY` | Groups by product id and name |
+| 3 | `COUNT` | Counts transactions per product |
+| 4 | `ORDER BY` | Sorts by product id ascending |
+
+### Solution
+
+```sql
+SELECT
+	id.product_name AS product_name,
+	COUNT(td.transaction_id) AS transcations_count
+FROM
+	excel_sql_inventory_data AS id
+INNER JOIN excel_sql_transaction_data AS td
+	ON id.product_id = td.product_id
+GROUP BY
+	id.product_id,
+	id.product_name
+ORDER BY
+	id.product_id;
+```
+
+### Expected output
+
+| product_name | transcations_count |
+|--------------|--------------------|
+| strawberry | 3 |
+| apple_fuji | 1 |
+| orange | 3 |
+| clementines | 1 |
+| blood_orange | 2 |
+
+---
+
+## Q12 — Salary Difference Between Marketing and Engineering
+
+> Write a query that calculates the difference between the highest salaries found
+> in the marketing and engineering departments. Output just the absolute difference
+> in salaries.
+
+### Approach
+
+| Step | Clause | What it does |
+|------|--------|--------------|
+| 1 | `LEFT JOIN` | Joins `db_dept` to `db_employee` on department id |
+| 2 | Conditional aggregation | `MAX(CASE WHEN department = 'marketing' ...)` and `MAX(CASE WHEN department = 'engineering' ...)` extract each department's top salary |
+| 3 | Final `SELECT` | Subtracts the two maxima |
+
+### Solution
+
+```sql
+SELECT
+	(MAX(CASE WHEN d.department = "marketing" THEN e.salary END) -
+	 MAX(CASE WHEN d.department = "engineering" THEN e.salary END)) AS salary_difference
+FROM
+	db_dept AS d
+LEFT JOIN db_employee AS e
+	ON d.id = e.department_id;
+```
+
+### Expected output
+
+| salary_difference |
+|-------------------|
+| 13285 |
+
+---
+
+## Q13 — Review Score Counts for Hotel Arena
+
+> Find the number of rows for each review score earned by 'Hotel Arena'. Output the
+> hotel name (which should be 'Hotel Arena'), review score along with the
+> corresponding number of rows with that score for the specified hotel.
+
+### Approach
+
+| Step | Clause | What it does |
+|------|--------|--------------|
+| 1 | `WHERE` | Filters rows where `hotel_name = 'Hotel Arena'` |
+| 2 | `GROUP BY` | Groups by hotel name and reviewer score |
+| 3 | `COUNT(*)` | Counts rows per score |
+| 4 | `ORDER BY` | Sorts by reviewer score |
+
+### Solution
+
+```sql
+SELECT
+	hotel_name,
+	reviewer_score,
+	COUNT(*) AS score_count
+FROM
+	hotel_reviews
+WHERE
+	hotel_name = "Hotel Arena"
+GROUP BY
+	hotel_name,
+	reviewer_score
+ORDER BY
+	reviewer_score;
+```
+
+### Expected output
+
+| hotel_name | reviewer_score | score_count |
+|------------|----------------|-------------|
+| Hotel Arena | 6 | 1 |
+| Hotel Arena | 8 | 1 |
+| Hotel Arena | 9 | 1 |
+
+---
+
+## Q14 — Total Sales Revenue of Samantha and Lisa
+
+> What is the total sales revenue of Samantha and Lisa?
+
+### Approach
+
+| Step | Clause | What it does |
+|------|--------|--------------|
+| 1 | `WHERE ... IN` | Filters rows for Samantha and Lisa |
+| 2 | `SUM` | Adds their `sales_revenue` |
+
+### Solution
+
+```sql
+SELECT
+	SUM(sales_revenue) AS total_sales_revenue
+FROM
+	sales_performance
+WHERE
+	salesperson IN ('Samantha', 'Lisa');
+```
+
+### Expected output
+
+| total_sales_revenue |
+|---------------------|
+| 112650 |
+
+---
+
+## Q15 — Days With More Distinct Email Receivers Than Senders
+
+> Find all records from days when the number of distinct users receiving emails
+> was greater than the number of distinct users sending emails.
+
+### Approach
+
+| Step | CTE | What it does |
+|------|-----|--------------|
+| 1 | `distinct_data` | `COUNT(DISTINCT from_user)` and `COUNT(DISTINCT to_user)` per day |
+| 2 | Final `SELECT` | Joins emails back to the per-day aggregates and keeps rows whose day has more distinct receivers than senders |
+
+### Solution
+
+```sql
+WITH distinct_data AS (
+	SELECT
+		day,
+		COUNT(DISTINCT from_user) AS distinct_senders,
+		COUNT(DISTINCT to_user) AS distinct_receivers
+	FROM
+		google_gmail_emails
+	GROUP BY
+		day
+)
+SELECT
+	gge.id,
+	gge.from_user,
+	gge.to_user,
+	gge.day
+FROM
+	google_gmail_emails AS gge
+LEFT JOIN distinct_data AS dd
+	ON gge.day = dd.day
+WHERE
+	dd.distinct_receivers > dd.distinct_senders;
+```
+
+### Expected output
+
+16 email records from days where distinct receivers exceed distinct senders (days 1, 2, 6, 8 and 10 in the sample data), e.g.
+
+| id | from_user | to_user | day |
+|----|-----------|---------|-----|
+| 4 | 6edf0be4b2267df1fa | 47be2887786891367e | 1 |
+| 10 | 6edf0be4b2267df1fa | 5b8754928306a18b68 | 2 |
+| 14 | 6edf0be4b2267df1fa | 157e3e9278e32aba3e | 2 |
+
 ---
 
 ## SQL Concepts Covered
@@ -486,14 +871,17 @@ ORDER BY
 | Common Table Expressions (`WITH`) | Q1, Q2, Q3, Q4, Q7 |
 | Window functions (`LAG`, `OVER`) | Q2, Q4 |
 | Set operations (`UNION`) | Q1 |
-| Aggregations (`COUNT`, `SUM`, `AVG`, `GROUP BY`) | Q1, Q2, Q4, Q5, Q6, Q7 |
+| Aggregations (`COUNT`, `SUM`, `AVG`, `GROUP BY`) | Q1, Q2, Q4, Q5, Q6, Q7, Q8, Q9, Q11, Q13, Q14, Q15 |
 | Date formatting and extraction (`DATE_FORMAT`, `EXTRACT`) | Q2, Q4, Q7 |
 | NULL-safe conditional logic (`CASE`) | Q2 |
-| Joins (`INNER JOIN`, `LEFT JOIN`, self-join) | Q3, Q5, Q6 |
+| Joins (`INNER JOIN`, `LEFT JOIN`, self-join) | Q3, Q5, Q6, Q9, Q11, Q12, Q15 |
 | Scalar / correlated subqueries | Q1, Q3 |
 | Numeric precision and rounding (`ROUND`, decimal division) | Q1, Q2, Q4, Q5, Q7 |
 | Error metrics (`POWER`, `SQRT`) | Q4 |
-| Filtering and sorting (`WHERE`, `ORDER BY ... DESC`) | Q4, Q5, Q6, Q7 |
+| Conditional aggregation (`CASE` inside `SUM`/`MAX`) | Q8, Q12 |
+| Window functions (`LEAD`, `ROW_NUMBER`) | Q10 |
+| Distinct counts (`COUNT(DISTINCT ...)`) | Q15 |
+| Filtering and sorting (`WHERE`, `ORDER BY ... DESC`) | Q4, Q5, Q6, Q7, Q8, Q11, Q13 |
 
 ---
 
