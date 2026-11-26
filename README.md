@@ -37,9 +37,9 @@ sql_de_practice/
 ├── q6/
 │   ├── q6.sql         <- available beds by host nationality
 │   └── readme.md      <- question + explanation
-└── q7/
-    ├── q7.sql         <- average spend on first-quarter Fridays
-    └── readme.md      <- question + explanation
+├── q7/
+│   ├── q7.sql         <- average spend on first-quarter Fridays
+│   └── readme.md      <- question + explanation
 ├── q8/
 │   ├── q8.sql         <- net difference in product launches (2020 vs 2019)
 │   └── readme.md      <- question + explanation
@@ -61,8 +61,14 @@ sql_de_practice/
 ├── q14/
 │   ├── q14.sql        <- total sales revenue of Samantha and Lisa
 │   └── readme.md      <- question + explanation
-└── q15/
-    ├── q15.sql        <- days with more distinct email receivers than senders
+├── q15/
+│   ├── q15.sql        <- days with more distinct email receivers than senders
+│   └── readme.md      <- question + explanation
+├── q16/
+│   ├── q16.sql        <- invalid Bank of Ireland transactions in December 2022
+│   └── readme.md      <- question + explanation
+└── q17/
+    ├── q17.sql        <- top 3 Uber business purposes by total mileage
     └── readme.md      <- question + explanation
 ```
 
@@ -87,6 +93,8 @@ sql_de_practice/
 | [Q13](#q13--review-score-counts-for-hotel-arena) | Review score counts for Hotel Arena | `WHERE`, `GROUP BY`, `COUNT`, `ORDER BY` | [q13/q13.sql](q13/q13.sql) |
 | [Q14](#q14--total-sales-revenue-of-samantha-and-lisa) | Total sales revenue of Samantha and Lisa | `SUM`, `WHERE ... IN` | [q14/q14.sql](q14/q14.sql) |
 | [Q15](#q15--days-with-more-distinct-email-receivers-than-senders) | Days where distinct email receivers exceed distinct senders | `COUNT(DISTINCT)`, `GROUP BY`, `JOIN`, comparison | [q15/q15.sql](q15/q15.sql) |
+| [Q16](#q16--invalid-bank-of-ireland-transactions) | Invalid Bank of Ireland transactions in December 2022 | Date/time filters, `EXTRACT`, `DAYOFWEEK`, `CAST(... AS TIME)`, `AND`/`OR` precedence | [q16/q16.sql](q16/q16.sql) |
+| [Q17](#q17--top-3-uber-business-purposes-by-total-mileage) | Top 3 Uber business purposes by total mileage | Window aggregation (`SUM() OVER`), `PARTITION BY`, `ORDER BY`, `LIMIT` | [q17/q17.sql](q17/q17.sql) |
 
 ---
 
@@ -864,6 +872,149 @@ WHERE
 
 ---
 
+## Q16 — Invalid Bank of Ireland Transactions
+
+> Bank of Ireland has requested that you detect invalid transactions in December
+> 2022. An invalid transaction is one that occurs outside of the bank's normal
+> business hours. The following are the hours of operation for all branches:
+>
+> - Monday – Friday: 09:00 – 16:00
+> - Saturday & Sunday: closed
+> - Irish public holidays: 25th and 26th December
+>
+> Determine the transaction ids of all invalid transactions.
+
+### Approach
+
+| Step | Clause | What it does |
+|------|--------|--------------|
+| 1 | Date filter | `EXTRACT(YEAR ...) = 2022` and `EXTRACT(MONTH ...) = 12` restrict the rows to December 2022 |
+| 2 | Weekend check | `DAYOFWEEK(time_stamp) IN (1, 7)` matches Sunday and Saturday, when branches are closed |
+| 3 | Time check | `CAST(time_stamp AS TIME)` is compared with the 09:00–16:00 window; times before 09:00 or after 16:00 are outside business hours |
+| 4 | Holiday check | The 25th and 26th of December are public holidays, so transactions on those dates are invalid at any time (not implemented in the current script) |
+| 5 | Final `SELECT` | Returns the `transaction_id` of every row that fails the checks |
+
+### Solution
+
+```sql
+SELECT 
+	transaction_id
+FROM
+	boi_transactions
+WHERE 
+	(EXTRACT(MONTH FROM time_stamp) = 12 AND EXTRACT(YEAR FROM  time_stamp) = 2022)
+    AND 
+    DAYOFWEEK(time_stamp) IN (1,7)
+    AND
+    CAST(time_stamp AS TIME) < '09:00:00' OR CAST(time_stamp AS TIME) > '16:00:00';
+```
+
+### Expected output
+
+With the script exactly as written, only transactions after 16:00 survive (no
+weekend transaction in the sample data is before 09:00). There is no `ORDER BY`,
+so the row order is not guaranteed:
+
+| transaction_id |
+|----------------|
+| 1052 |
+| 1056 |
+| 1063 |
+| 1066 |
+| 1071 |
+| 1074 |
+
+> **Note:** `AND` binds more tightly than `OR` in MySQL, so the `WHERE` clause is
+> evaluated as `(December 2022 AND weekend AND before 09:00) OR (after 16:00)`.
+> That makes the date and weekend checks apply only to the "before 09:00" branch,
+> while any transaction after 16:00 is returned regardless of the day. The script
+> therefore misses:
+>
+> - weekend transactions during 09:00–16:00 (`1051`, `1053`, `1054`, `1062`,
+>   `1064`, `1067`, `1068`, `1076`),
+> - weekday transactions before 09:00 (`1055`, `1065`, `1073`), and
+> - transactions on the 25th/26th December public holidays (`1069`, `1070`).
+>
+> The complete invalid set is 19 transactions:
+> `1051, 1052, 1053, 1054, 1055, 1056, 1062, 1063, 1064, 1065, 1066, 1067, 1068,
+> 1069, 1070, 1071, 1073, 1074, 1076`. To get it, wrap the time checks in
+> parentheses and add the holiday condition:
+>
+> ```sql
+> WHERE EXTRACT(YEAR FROM time_stamp) = 2022
+>   AND EXTRACT(MONTH FROM time_stamp) = 12
+>   AND (
+>        DAYOFWEEK(time_stamp) IN (1, 7)
+>        OR DATE(time_stamp) IN ('2022-12-25', '2022-12-26')
+>        OR CAST(time_stamp AS TIME) < '09:00:00'
+>        OR CAST(time_stamp AS TIME) > '16:00:00'
+>   );
+> ```
+
+---
+
+## Q17 — Top 3 Uber Business Purposes by Total Mileage
+
+> You're given a table of Uber rides that contains the mileage and the purpose for
+> the business expense. You're asked to find business purposes that generate the
+> most miles driven for passengers that use Uber for their business transportation.
+> Find the top 3 business purpose categories by total mileage.
+
+### Approach
+
+| Step | Clause | What it does |
+|------|--------|--------------|
+| 1 | Window aggregation | `SUM(miles) OVER (PARTITION BY purpose ORDER BY miles DESC)` computes a running total of miles within each purpose, starting from the longest ride |
+| 2 | `ORDER BY` | Sorts the individual rides by `miles` descending |
+| 3 | `LIMIT` | Keeps only the first 3 rows |
+
+### Solution
+
+```sql
+SELECT 
+	*,
+    ROUND(SUM(miles) OVER(
+		PARTITION BY 
+			purpose
+		ORDER BY 
+			miles DESC
+    ), 2) AS sum_of_mile_by_purpose
+FROM 
+	my_uber_drives
+ORDER BY 
+	miles DESC
+LIMIT 3;
+```
+
+### Expected output
+
+| start_date | end_date | category | start | stop | miles | purpose | sum_of_mile_by_purpose |
+|------------|----------|----------|-------|------|-------|---------|------------------------|
+| 2016-01-06 14:42:00 | 2016-01-06 15:49:00 | Business | Fort Pierce | West Palm Beach | 63.7 | Customer Visit | 63.7 |
+| 2016-01-06 17:30:00 | 2016-01-06 17:35:00 | Business | West Palm Beach | Palm Beach | 7.1 | Meeting | 7.1 |
+| 2016-01-01 21:11:00 | 2016-01-01 21:17:00 | Business | Fort Pierce | Fort Pierce | 5.1 | Meal/Entertain | 5.1 |
+
+> **Note:** the script ranks **individual rides**, not purpose totals, and the
+> `ORDER BY` inside `OVER` makes `SUM(miles)` a running total per purpose rather
+> than the purpose's full total. Grouping the sample data by purpose gives
+> Customer Visit `63.7`, Meeting `11.8`, Meal/Entertain `9.4`,
+> Errand/Supplies `4.8`, and the NULL purpose `5.0`, so the intended top 3
+> purposes are Customer Visit, Meeting, and Meal/Entertain. The query that
+> answers the question is:
+>
+> ```sql
+> SELECT
+>     purpose,
+>     ROUND(SUM(miles), 2) AS total_miles
+> FROM my_uber_drives
+> WHERE purpose IS NOT NULL
+> GROUP BY purpose
+> ORDER BY total_miles DESC
+> LIMIT 3;
+> ```
+
+---
+
 ## SQL Concepts Covered
 
 | Concept | Where |
@@ -872,16 +1023,20 @@ WHERE
 | Window functions (`LAG`, `OVER`) | Q2, Q4 |
 | Set operations (`UNION`) | Q1 |
 | Aggregations (`COUNT`, `SUM`, `AVG`, `GROUP BY`) | Q1, Q2, Q4, Q5, Q6, Q7, Q8, Q9, Q11, Q13, Q14, Q15 |
-| Date formatting and extraction (`DATE_FORMAT`, `EXTRACT`) | Q2, Q4, Q7 |
+| Date formatting and extraction (`DATE_FORMAT`, `EXTRACT`) | Q2, Q4, Q7, Q16 |
+| Date/time parts and casting (`DAYOFWEEK`, `CAST(... AS TIME)`) | Q16 |
 | NULL-safe conditional logic (`CASE`) | Q2 |
 | Joins (`INNER JOIN`, `LEFT JOIN`, self-join) | Q3, Q5, Q6, Q9, Q11, Q12, Q15 |
 | Scalar / correlated subqueries | Q1, Q3 |
-| Numeric precision and rounding (`ROUND`, decimal division) | Q1, Q2, Q4, Q5, Q7 |
+| Numeric precision and rounding (`ROUND`, decimal division) | Q1, Q2, Q4, Q5, Q7, Q17 |
 | Error metrics (`POWER`, `SQRT`) | Q4 |
 | Conditional aggregation (`CASE` inside `SUM`/`MAX`) | Q8, Q12 |
 | Window functions (`LEAD`, `ROW_NUMBER`) | Q10 |
+| Window aggregation (`SUM() OVER (PARTITION BY ...)`) | Q17 |
 | Distinct counts (`COUNT(DISTINCT ...)`) | Q15 |
-| Filtering and sorting (`WHERE`, `ORDER BY ... DESC`) | Q4, Q5, Q6, Q7, Q8, Q11, Q13 |
+| Boolean logic and operator precedence (`AND`, `OR`, parentheses) | Q16 |
+| Limiting rows (`LIMIT`) | Q17 |
+| Filtering and sorting (`WHERE`, `ORDER BY ... DESC`) | Q4, Q5, Q6, Q7, Q8, Q11, Q13, Q16, Q17 |
 
 ---
 
